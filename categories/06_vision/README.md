@@ -152,7 +152,7 @@ Python 公共代码负责张量检查、输出尺寸计算、卷积核尺寸或�
 
 CUDA 061–068 主要使用 32 位有符号 `int` 计算坐标和线性地址。`total_fits` 只证明输出元素总数不超过 `INT_MAX`，不能证明 `高度 × 宽度`、`输出坐标 × 输入尺寸` 或更长的中间乘积安全。061–066 还直接计算 `输入尺寸 + 2 × 填充`。这些表达式在极大尺寸下可能溢出。
 
-Triton 067–068 的坐标和地址表达式也没有显式提升到 64 位。生产实现应在 CPU 端逐项检查中间乘积，或在 GPU kernel 中使用 64 位地址计算。各算子的具体边界在对应限制中说明。
+067 的 Triton 和 CUDA 坐标映射乘法已提升到 64 位，但这不代表所有线性地址表达式都安全。068 及其他地址表达式仍需在 CPU 端逐项检查中间乘积，或在 GPU kernel 中使用 64 位地址计算。各算子的具体边界在对应限制中说明。
 
 ## 逐算子教程
 
@@ -641,21 +641,21 @@ $$
 ```python
 output_index = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
 output_mask = output_index < total
-input_y = output_y * INPUT_HEIGHT // OUTPUT_HEIGHT
-input_x = output_x * INPUT_WIDTH // OUTPUT_WIDTH
+input_y = output_y.to(tl.int64) * INPUT_HEIGHT // OUTPUT_HEIGHT
+input_x = output_x.to(tl.int64) * INPUT_WIDTH // OUTPUT_WIDTH
 value = tl.load(x_ptr + input_index, mask=output_mask, other=0.0)
 tl.store(out_ptr + output_index, value, mask=output_mask)
 ```
 
-整数整除实现向下取整映射。当前代码没有把坐标乘法或线性地址显式转换为 64 位。
+整数整除实现向下取整映射。坐标在乘法前转换为 64 位，避免中间乘积超过 int32 范围；乘完再转换无法修复已经发生的溢出。
 
 #### CUDA实现
 
 一个 `CUDA thread` 处理一个输出元素，并使用相同坐标公式。
 
 ```cuda
-const int input_y = output_y * input_height / out_height;
-const int input_x = output_x * input_width / out_width;
+const int input_y = (1LL * output_y * input_height) / out_height;
+const int input_x = (1LL * output_x * input_width) / out_width;
 out[output_index] =
     x[((batch * channels + channel) * input_height + input_y) *
           input_width +
@@ -674,13 +674,13 @@ CPU 启动函数只检查输出元素总数能否放入 `int`，没有单独检�
 
 #### 验证与限制
 
-下面是 32 位坐标乘法的分析反例，不应在修复前作为运行测试：输入形状为 $[1,1,50000,1]$，目标输出形状也为 $[1,1,50000,1]$。当 $o_y=49999$ 时：
+下面的例子说明为何坐标乘法需要 64 位：输入形状为 $[1,1,50000,1]$，目标输出形状也为 $[1,1,50000,1]$。当 $o_y=49999$ 时：
 
 $$
 o_yH_i=49999\times50000=2\,499\,950\,000>2\,147\,483\,647=\mathrm{INT\_MAX}
 $$
 
-输出总数只有 50000，因此 `total_fits` 会通过，但坐标乘法仍可能溢出并形成无效地址。这说明“输出元素总数适合 32 位”不能证明所有地址安全。
+输出总数只有 50000，`total_fits` 会通过；当前两端实现使用 64 位中间乘积处理该情况。回归测试分别覆盖高度、宽度从 50000 放大到 50001，并精确检查全部输出。其他线性地址表达式的范围仍需单独验证。
 
 ### 068 Bilinear Resize
 
@@ -774,7 +774,7 @@ python3 benchmarks/run.py --op 061 --size small --check
 
 第一条命令将 Triton 结果与 PyTorch 参考实现比较。第二条命令运行 061 的小规模 benchmark，并通过 `--check` 先检查正确性。benchmark 默认不检查正确性，也不会编译或运行 CUDA 文件。
 
-现有自动测试覆盖常见 FP32 形状、卷积填充与步幅、065–066 的边缘窗口、普通缩放、068 的单像素输入，以及一个无效卷积输出尺寸。测试不覆盖 FP16、BF16、NaN、超大索引、整数溢出、CUDA 编译或 CUDA 运行。
+现有自动测试覆盖常见 FP32 形状、卷积填充与步幅、065–066 的边缘窗口、普通缩放、067 横纵坐标乘积超过 int32 的回归输入、068 的单像素输入，以及一个无效卷积输出尺寸。测试不覆盖 FP16、BF16、NaN、其他超大索引或整数溢出、CUDA 编译或 CUDA 运行。新增 GPU 回归用例尚未在本机执行。
 
 ## 共同限制
 

@@ -27,8 +27,8 @@ def _op067_nearest_resize_kernel(
     output_y = (output_index // OUTPUT_WIDTH) % OUTPUT_HEIGHT
     channel = (output_index // (OUTPUT_HEIGHT * OUTPUT_WIDTH)) % CHANNELS
     batch = output_index // (CHANNELS * OUTPUT_HEIGHT * OUTPUT_WIDTH)
-    input_y = output_y * INPUT_HEIGHT // OUTPUT_HEIGHT
-    input_x = output_x * INPUT_WIDTH // OUTPUT_WIDTH
+    input_y = output_y.to(tl.int64) * INPUT_HEIGHT // OUTPUT_HEIGHT
+    input_x = output_x.to(tl.int64) * INPUT_WIDTH // OUTPUT_WIDTH
     input_index = (
         ((batch * CHANNELS + channel) * INPUT_HEIGHT + input_y) * INPUT_WIDTH
         + input_x

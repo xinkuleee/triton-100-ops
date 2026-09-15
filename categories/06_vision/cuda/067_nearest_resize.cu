@@ -11,8 +11,8 @@ __global__ void op067_nearest_resize_kernel(
   const int output_y = (output_index / out_width) % out_height;
   const int channel = (output_index / (out_width * out_height)) % channels;
   const int batch = output_index / (channels * out_height * out_width);
-  const int input_y = output_y * input_height / out_height;
-  const int input_x = output_x * input_width / out_width;
+  const int input_y = (1LL * output_y * input_height) / out_height;
+  const int input_x = (1LL * output_x * input_width) / out_width;
   out[output_index] =
       x[((batch * channels + channel) * input_height + input_y) *
             input_width +

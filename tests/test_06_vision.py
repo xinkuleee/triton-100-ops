@@ -53,6 +53,23 @@ def test_op067_and_op068_resize():
     assert_close(torch, ops.op068_bilinear_resize(x, 13, 15), F.interpolate(x, (13, 15), mode="bilinear", align_corners=False))
 
 
+@pytest.mark.parametrize(
+    "input_shape,output_size",
+    [
+        ((1, 1, 50000, 1), (50001, 1)),
+        ((1, 1, 1, 50000), (1, 50001)),
+    ],
+    ids=["height", "width"],
+)
+def test_op067_coordinate_product_exceeds_int32(input_shape, output_size):
+    values = torch.arange(50000, device=DEVICE, dtype=torch.float32)
+    x = values.reshape(input_shape)
+    # Upsizing N to N+1 repeats the first value, then copies every remaining value.
+    expected = torch.cat((values[:1], values)).reshape(1, 1, *output_size)
+    actual = ops.op067_nearest_resize(x, *output_size)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
 def test_op065_negative_padding_identity_and_op066_valid_count():
     x = -torch.arange(1, 17, device=DEVICE, dtype=torch.float32).reshape(1, 1, 4, 4)
     assert_close(
